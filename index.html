@@ -277,8 +277,8 @@
                 let cuotasPagadas = client.minCuotaPendiente === 9999 ? 0 : Math.max(0, client.minCuotaPendiente - 1);
                 client.avancePorcentaje = client.plazoTotalCredito > 0 ? (cuotasPagadas / client.plazoTotalCredito) * 100 : 0;
                 
-                client.cuotasRestantes = client.plazoTotalCredito > 0 ? (client.plazoTotalCredito - cuotasPagadas) : 0;
-                client.montoCancelarCapInt = client.cuotasRestantes * client.cuotaBase;
+                let cuotasRestantes = client.plazoTotalCredito > 0 ? (client.plazoTotalCredito - cuotasPagadas) : 0;
+                client.montoCancelarCapInt = cuotasRestantes * client.cuotaBase;
 
                 return client;
             }).filter(client => client.deudaTotalRestante > 0);
@@ -393,22 +393,6 @@
                 img.src = 'data:image/svg+xml;base64,' + btoa(svgStr);
             }, []);
 
-            React.useEffect(() => {
-                const draft = localStorage.getItem('crediban_draft');
-                if (draft) {
-                    try {
-                        const parsed = JSON.parse(draft);
-                        if (parsed && parsed.length > 0) setClients(parsed);
-                    } catch(e) {}
-                }
-            }, []);
-
-            React.useEffect(() => {
-                if (clients.length > 0) {
-                    localStorage.setItem('crediban_draft', JSON.stringify(clients));
-                }
-            }, [clients]);
-
             const [timeNow, setTimeNow] = React.useState(new Date());
             const [historyData, setHistoryData] = React.useState([]);
             const [selectedHistoryDate, setSelectedHistoryDate] = React.useState('');
@@ -432,7 +416,6 @@
                 const pwd = window.prompt("⚠️ ACCIÓN IRREVERSIBLE ⚠️\nPara limpiar la base de datos de la sesión actual, ingrese la contraseña:");
                 if (pwd === 'CREDICAJA123') {
                     setClients([]);
-                    localStorage.removeItem('crediban_draft');
                 } else if (pwd !== null) {
                     alert("Contraseña incorrecta. Acción cancelada.");
                 }
@@ -445,14 +428,14 @@
                 const meta = clients.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
                 const total = clients.length;
                 const gestionados = clients.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-                const promesas = clients.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
+                const promesas = clients.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
                 const cobertura = total > 0 ? ((gestionados / total) * 100).toFixed(1) : 0;
                 
                 const asesoresMetrics = asesoresList.map(asesor => {
-                    const asC = clients.filter(c => c.asesor === asesor);
+                    const asC = clients.filter(c => String(c.asesor || 'Sin Asesor') === asesor);
                     const aTot = asC.length;
                     const aGest = asC.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-                    const aProm = asC.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
+                    const aProm = asC.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
                     const aMeta = asC.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
                     const aCob = aTot > 0 ? ((aGest / aTot) * 100).toFixed(1) : 0;
                     return { asesor, aTot, aGest, aCob, aProm, aMeta };
@@ -465,9 +448,13 @@
                     clientesRaw: clients
                 };
 
-                localStorage.setItem(`crediban_cierre_${dateStr}`, JSON.stringify(dataCierre));
-                alert(`¡Éxito! El Cierre del día ${dateStr} se ha guardado correctamente.`);
-                cargarHistorial();
+                try {
+                    localStorage.setItem(`crediban_cierre_${dateStr}`, JSON.stringify(dataCierre));
+                    alert(`¡Éxito! El Cierre del día ${dateStr} se ha guardado correctamente.`);
+                    cargarHistorial();
+                } catch(e) {
+                    alert("Aviso: Memoria del navegador llena. Borre historiales anteriores para guardar.");
+                }
             };
 
             React.useEffect(() => {
@@ -478,7 +465,11 @@
 
             const cargarHistorial = () => {
                 const keys = Object.keys(localStorage).filter(k => k.startsWith('crediban_cierre_'));
-                const list = keys.map(k => JSON.parse(localStorage.getItem(k))).sort((a,b) => b.fecha.localeCompare(a.fecha));
+                const list = [];
+                keys.forEach(k => {
+                    try { list.push(JSON.parse(localStorage.getItem(k))); } catch(e) {}
+                });
+                list.sort((a,b) => b.fecha.localeCompare(a.fecha));
                 setHistoryData(list);
                 if (list.length > 0 && !selectedHistoryDate) setSelectedHistoryDate(list[0].fecha);
             };
@@ -725,7 +716,7 @@
                 doc.save(`${getFilePrefix()}Rpt_Llamadas.pdf`);
             };
 
-            // ---- PDF 2: RPT. MORA (ASIGNACIÓN) ----
+            // ---- PDF 2: RPT. MORA (ASIGNACIÓN EXCLUSIVA PARA ASESORES) ----
             const generarPDFMora = () => {
                 const moraClients = filteredClients.filter(c => c.maxAtraso >= 0);
                 if (moraClients.length === 0) {
@@ -754,7 +745,7 @@
                 doc.text(`RPT. GLOBAL DE MORA Y ASIGNACIÓN - CREDIBAN`, 28, 16);
                 doc.setFontSize(11);
                 doc.setTextColor(100);
-                doc.text(`Fecha: ${fechaActual} - Hora: ${horaActual} | Vista Global de Cartera en Mora`, 28, 23);
+                doc.text(`Fecha: ${fechaActual} - Hora: ${horaActual} | Vista Global de Cartera en Mora | Clientes Totales: ${moraClients.length}`, 28, 23);
                 
                 doc.setFontSize(8);
                 doc.setTextColor(40, 40, 40);
@@ -763,26 +754,28 @@
                 const globalMoraData = [...moraClients].sort((a,b) => b.totalCobrarHoy - a.totalCobrarHoy).map(c => [
                     toTitleCase(c.nombre), 
                     c.asesor,
-                    `${c.avancePorcentaje.toFixed(1)}%`,
-                    `${c.maxAtraso}`, 
+                    `${(c.avancePorcentaje || 0).toFixed(1)}%`,
+                    `${c.maxAtraso || 0}`, 
                     c.cuotasAtrasadas > 0 ? c.cuotasAtrasadas : c.cuotasVenceHoy,
                     c.saldoCapital > 0 ? `S/ ${c.saldoCapital.toFixed(2)}` : '-',
                     c.montoCancelarCapInt > 0 ? `S/ ${c.montoCancelarCapInt.toFixed(2)}` : '-',
-                    `S/ ${c.cuotaOriginalVencida.toFixed(2)}`, 
-                    `S/ ${c.moraGeneradaVencida.toFixed(2)}`, 
-                    `S/ ${c.totalCobrarHoy.toFixed(2)}`
+                    c.cuotaMasAntiguaBase > 0 ? `S/ ${c.cuotaMasAntiguaBase.toFixed(2)}` : '-',
+                    c.cuotaMasAntiguaTotal > 0 ? `S/ ${c.cuotaMasAntiguaTotal.toFixed(2)}` : '-',
+                    c.cuotaOriginalVencida > 0 ? `S/ ${c.cuotaOriginalVencida.toFixed(2)}` : '-', 
+                    c.moraGeneradaVencida > 0 ? `S/ ${c.moraGeneradaVencida.toFixed(2)}` : '-', 
+                    `S/ ${(c.totalCobrarHoy || 0).toFixed(2)}`
                 ]);
 
                 doc.autoTable({
                     startY: 38, 
-                    head: [['Cliente', 'Asesor', 'Avance %', 'Atraso', 'Cts.\nAtr.', 'Cancelar\n(Capital)', 'Cancelar\n(Cap+Int)', 'C. Ori.\nVencida', 'Int.\nMora', 'Exigible Hoy\n(0 Mora)']],
+                    head: [['Cliente', 'Asesor', 'Avance %', 'Atraso', 'Cts.\nAtr.', 'Cancelar\n(Capital)', 'Cancelar\n(Cap+Int)', '1ra C.\nAtr.', '1ra C.\n+ Mora', 'C. Ori.\nVencida', 'Int.\nMora', 'Exigible Hoy\n(0 Mora)']],
                     body: globalMoraData, 
                     theme: 'grid',
                     headStyles: { fillColor: [185, 28, 28], textColor: [255, 255, 255] }, 
-                    styles: { fontSize: 7, cellPadding: 3 },
+                    styles: { fontSize: 7, cellPadding: 2 },
                     columnStyles: { 
-                        4: { cellWidth: 12 }, 5: { cellWidth: 20 }, 
-                        6: { cellWidth: 22 }, 7: { cellWidth: 20 }, 8: { cellWidth: 22 }, 9: { cellWidth: 24 } 
+                        4: { cellWidth: 10 }, 5: { cellWidth: 16 }, 
+                        6: { cellWidth: 18 }, 7: { cellWidth: 16 }, 8: { cellWidth: 16 }, 9: { cellWidth: 18 }, 10: { cellWidth: 20 }, 11: { cellWidth: 24 } 
                     },
                     didParseCell: function(data) {
                         if (data.section === 'body' && data.column.index === 3) {
@@ -834,26 +827,28 @@
 
                     const tableData = asesorClients.map(c => [
                         toTitleCase(c.nombre), 
-                        `${c.avancePorcentaje.toFixed(1)}%`,
-                        `${c.maxAtraso}`, 
+                        `${(c.avancePorcentaje || 0).toFixed(1)}%`,
+                        `${c.maxAtraso || 0}`, 
                         c.cuotasAtrasadas > 0 ? c.cuotasAtrasadas : c.cuotasVenceHoy,
                         c.saldoCapital > 0 ? `S/ ${c.saldoCapital.toFixed(2)}` : '-',
                         c.montoCancelarCapInt > 0 ? `S/ ${c.montoCancelarCapInt.toFixed(2)}` : '-',
-                        `S/ ${c.cuotaOriginalVencida.toFixed(2)}`, 
-                        `S/ ${c.moraGeneradaVencida.toFixed(2)}`, 
-                        `S/ ${c.totalCobrarHoy.toFixed(2)}`
+                        c.cuotaMasAntiguaBase > 0 ? `S/ ${c.cuotaMasAntiguaBase.toFixed(2)}` : '-',
+                        c.cuotaMasAntiguaTotal > 0 ? `S/ ${c.cuotaMasAntiguaTotal.toFixed(2)}` : '-',
+                        c.cuotaOriginalVencida > 0 ? `S/ ${c.cuotaOriginalVencida.toFixed(2)}` : '-', 
+                        c.moraGeneradaVencida > 0 ? `S/ ${c.moraGeneradaVencida.toFixed(2)}` : '-', 
+                        `S/ ${(c.totalCobrarHoy || 0).toFixed(2)}`
                     ]);
 
                     doc.autoTable({
                         startY: 38, 
-                        head: [['Cliente', 'Avance %', 'Atraso', 'Cts.\nAtr.', 'Cancelar\n(Capital)', 'Cancelar\n(Cap+Int)', 'C. Ori.\nVencida', 'Int.\nMora', 'Exigible Hoy\n(0 Mora)']],
+                        head: [['Cliente', 'Avance %', 'Atraso', 'Cts.\nAtr.', 'Cancelar\n(Capital)', 'Cancelar\n(Cap+Int)', '1ra C.\nAtr.', '1ra C.\n+ Mora', 'C. Ori.\nVencida', 'Int.\nMora', 'Exigible Hoy\n(0 Mora)']],
                         body: tableData, 
                         theme: 'grid',
                         headStyles: { fillColor: [185, 28, 28], textColor: [255, 255, 255] }, 
-                        styles: { fontSize: 8, cellPadding: 3 },
+                        styles: { fontSize: 7, cellPadding: 2 },
                         columnStyles: { 
-                            3: { cellWidth: 15 }, 4: { cellWidth: 24 }, 
-                            5: { cellWidth: 24 }, 6: { cellWidth: 20 }, 7: { cellWidth: 22 }, 8: { cellWidth: 26 } 
+                            3: { cellWidth: 10 }, 4: { cellWidth: 18 }, 
+                            5: { cellWidth: 20 }, 6: { cellWidth: 16 }, 7: { cellWidth: 18 }, 8: { cellWidth: 18 }, 9: { cellWidth: 20 }, 10: { cellWidth: 26 } 
                         },
                         didParseCell: function(data) {
                             if (data.section === 'body' && data.column.index === 2) {
@@ -886,8 +881,8 @@
 
                 const totalMora = dataToExport.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
                 const totalClientes = dataToExport.length;
-                const totalGestionados = dataToExport.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-                const totalPromesas = dataToExport.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
+                const totalGestionados = dataToExport.filter(c => (String(c.estadoLlamada || '') !== 'Pendiente' && String(c.estadoLlamada || '') !== '') || (String(c.estadoWA || '') !== 'Pendiente' && String(c.estadoWA || '') !== '')).length;
+                const totalPromesas = dataToExport.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
                 const porcentajeCobertura = totalClientes > 0 ? ((totalGestionados / totalClientes) * 100).toFixed(1) : 0;
 
                 if (logoBase64) {
@@ -913,13 +908,12 @@
 
                 const listAse = [...new Set(dataToExport.map(c => String(c.asesor || 'Sin Asesor')))].sort();
                 const metricsByAsesor = listAse.map(asesor => {
-                    const asC = dataToExport.filter(c => c.asesor === asesor);
+                    const asC = dataToExport.filter(c => String(c.asesor || 'Sin Asesor') === asesor);
                     const asTot = asC.length;
+                    const asGest = asC.filter(c => (String(c.estadoLlamada || '') !== 'Pendiente' && String(c.estadoLlamada || '') !== '') || (String(c.estadoWA || '') !== 'Pendiente' && String(c.estadoWA || '') !== '')).length;
+                    const asProm = asC.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
                     const asMeta = asC.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
-                    const asGest = asC.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-                    const asProm = asC.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
-                    const asPos = asC.filter(c => (c.estadoLlamada || '').includes('Positivo') || (c.estadoWA || '').includes('Respondió')).length;
-                    const asCob = asTot > 0 ? ((asGest / asTot) * 100).toFixed(1) : 0;
+                    const asCob = asTot > 0 ? ((asGest / asTot) * 100).toFixed(1) : '0.0';
                     return [
                         asesor, asTot, `S/ ${asMeta.toFixed(2)}`, asGest, `${asCob}%`, asPos, asProm
                     ];
@@ -939,22 +933,17 @@
                 doc.save(`${getFilePrefix()}Reporte_Cierre.pdf`);
             };
 
+            // Cálculos Web Seguros
             const globalTotalClientes = clients.length;
-            const globalGestionados = clients.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-            const globalCobertura = globalTotalClientes > 0 ? ((globalGestionados / globalTotalClientes) * 100).toFixed(1) : 0;
-            const globalPromesas = clients.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
+            const globalGestionados = clients.filter(c => (String(c.estadoLlamada || '') !== 'Pendiente' && String(c.estadoLlamada || '') !== '') || (String(c.estadoWA || '') !== 'Pendiente' && String(c.estadoWA || '') !== '')).length;
+            const globalCobertura = globalTotalClientes > 0 ? ((globalGestionados / globalTotalClientes) * 100).toFixed(1) : '0.0';
+            const globalPromesas = clients.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
             const globalMeta = clients.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
             
             const historyObj = historyData.find(h => h.fecha === selectedHistoryDate);
 
             return (
                 <div className="min-h-screen relative bg-gray-50 pb-12 font-sans">
-                    
-                    {isCountdownActive && (
-                        <div className="bg-yellow-500 text-yellow-900 px-4 py-2 flex justify-center items-center font-bold text-sm shadow-md animate-pulse">
-                            ⏳ ATENCIÓN: El auto-guardado de cierre operativo se realizará en {remainingMinutes}m {remainingSeconds}s. Asegúrate de actualizar los estados.
-                        </div>
-                    )}
 
                     {isTemplateModalOpen && (
                         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-50 p-4">
@@ -1103,19 +1092,19 @@
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-red-500">
                                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Peso Cartera (Exigible)</p>
-                                        <p className="text-2xl font-black text-gray-800">S/ {calcPesoCarteraExigible.toFixed(2)}</p>
+                                        <p className="text-2xl font-black text-gray-800">S/ {(Number(calcPesoCarteraExigible) || 0).toFixed(2)}</p>
                                     </div>
                                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-blue-500">
                                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Total Cancelar (Cap + Int)</p>
-                                        <p className="text-2xl font-black text-blue-700">S/ {calcTotalCancelarCapInt.toFixed(2)}</p>
+                                        <p className="text-2xl font-black text-blue-700">S/ {(Number(calcTotalCancelarCapInt) || 0).toFixed(2)}</p>
                                     </div>
                                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-green-500">
                                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Total Cancelar (Capital)</p>
-                                        <p className="text-2xl font-black text-green-700">S/ {calcTotalCancelarCapital.toFixed(2)}</p>
+                                        <p className="text-2xl font-black text-green-700">S/ {(Number(calcTotalCancelarCapital) || 0).toFixed(2)}</p>
                                     </div>
                                     <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-200 border-l-4 border-l-orange-500">
                                         <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider mb-1">Mora Acumulada</p>
-                                        <p className="text-2xl font-black text-orange-600">S/ {calcMoraAcumulada.toFixed(2)}</p>
+                                        <p className="text-2xl font-black text-orange-600">S/ {(Number(calcMoraAcumulada) || 0).toFixed(2)}</p>
                                     </div>
                                 </div>
 
@@ -1236,29 +1225,29 @@
                                                     
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                         Desembolso<br/>
-                                                        <span className="text-gray-800 font-bold text-[10px] whitespace-nowrap">S/ {calcDesembolso.toFixed(2)}</span>
+                                                        <span className="text-gray-800 font-bold text-[10px] whitespace-nowrap">S/ {(Number(calcDesembolso) || 0).toFixed(2)}</span>
                                                     </th>
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-green-700 uppercase tracking-wider border-l border-gray-200">
                                                         Cancelar<br/>(Capital)<br/>
-                                                        <span className="font-bold text-[10px] whitespace-nowrap">S/ {calcTotalCancelarCapital.toFixed(2)}</span>
+                                                        <span className="font-bold text-[10px] whitespace-nowrap">S/ {(Number(calcTotalCancelarCapital) || 0).toFixed(2)}</span>
                                                     </th>
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-blue-700 uppercase tracking-wider border-r border-gray-200">
                                                         Cancelar<br/>(Cap+Int)<br/>
-                                                        <span className="font-bold text-[10px] whitespace-nowrap">S/ {calcTotalCancelarCapInt.toFixed(2)}</span>
+                                                        <span className="font-bold text-[10px] whitespace-nowrap">S/ {(Number(calcTotalCancelarCapInt) || 0).toFixed(2)}</span>
                                                     </th>
                                                     
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                         C. Original<br/>(Vencida)<br/>
-                                                        <span className="text-gray-800 font-bold text-[10px] whitespace-nowrap">S/ {calcCuotaOriVencida.toFixed(2)}</span>
+                                                        <span className="text-gray-800 font-bold text-[10px] whitespace-nowrap">S/ {(Number(calcCuotaOriVencida) || 0).toFixed(2)}</span>
                                                     </th>
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                                                         Int. Mora<br/>(Penalidad)<br/>
-                                                        <span className="text-orange-600 font-bold text-[10px] whitespace-nowrap">S/ {calcMoraAcumulada.toFixed(2)}</span>
+                                                        <span className="text-orange-600 font-bold text-[10px] whitespace-nowrap">S/ {(Number(calcMoraAcumulada) || 0).toFixed(2)}</span>
                                                     </th>
                                                     <th className="px-3 py-3 text-right text-xs font-medium text-red-700 font-bold uppercase tracking-wider bg-red-50">
                                                         Exigible HOY<br/>
                                                         <span className="text-[9px] font-normal text-red-500 text-center block w-full leading-tight mb-1">(Para dejar mora en 0)</span>
-                                                        <span className="text-[11px] font-black whitespace-nowrap">S/ {calcPesoCarteraExigible.toFixed(2)}</span>
+                                                        <span className="text-[11px] font-black whitespace-nowrap">S/ {(Number(calcPesoCarteraExigible) || 0).toFixed(2)}</span>
                                                     </th>
                                                     
                                                     <th className="px-2 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider border-l border-gray-200">WA</th>
@@ -1269,7 +1258,7 @@
                                             <tbody className="bg-white divide-y divide-gray-200">
                                                 {clients.length === 0 ? (
                                                     <tr>
-                                                        <td colSpan="14" className="px-6 py-16 text-center text-gray-500 bg-white">
+                                                        <td colSpan={14} className="px-6 py-16 text-center text-gray-500 bg-white">
                                                             <div className="flex flex-col items-center">
                                                                 <span className="text-4xl mb-3">📄</span>
                                                                 <span className="font-medium text-lg">Sube tu archivo CSV del día</span>
@@ -1426,14 +1415,14 @@
                                             </thead>
                                             <tbody className="divide-y divide-gray-200">
                                                 {asesoresList.length === 0 ? (
-                                                    <tr><td colSpan="6" className="px-6 py-8 text-center text-gray-500">Carga un CSV para ver datos</td></tr>
+                                                    <tr><td colSpan={6} className="px-6 py-8 text-center text-gray-500">Carga un CSV para ver datos</td></tr>
                                                 ) : asesoresList.map(asesor => {
-                                                    const asClientes = clients.filter(c => c.asesor === asesor);
+                                                    const asClientes = clients.filter(c => String(c.asesor || 'Sin Asesor') === asesor);
                                                     const asTotal = asClientes.length;
-                                                    const asGestionados = asClientes.filter(c => (c.estadoLlamada && c.estadoLlamada !== 'Pendiente') || (c.estadoWA && c.estadoWA !== 'Pendiente')).length;
-                                                    const asPromesas = asClientes.filter(c => (c.estadoLlamada || '').includes('Promesa') || (c.estadoWA || '').includes('Promesa')).length;
+                                                    const asGestionados = asClientes.filter(c => (String(c.estadoLlamada || '') !== 'Pendiente' && String(c.estadoLlamada || '') !== '') || (String(c.estadoWA || '') !== 'Pendiente' && String(c.estadoWA || '') !== '')).length;
+                                                    const asPromesas = asClientes.filter(c => String(c.estadoLlamada || '').includes('Promesa') || String(c.estadoWA || '').includes('Promesa')).length;
                                                     const asMeta = asClientes.reduce((sum, c) => sum + (Number(c.totalCobrarHoy) || 0), 0);
-                                                    const asCobertura = asTotal > 0 ? ((asGestionados / asTotal) * 100).toFixed(1) : 0;
+                                                    const asCobertura = asTotal > 0 ? ((asGestionados / asTotal) * 100).toFixed(1) : '0.0';
                                                     
                                                     return (
                                                         <tr key={asesor} className="hover:bg-gray-50">
@@ -1442,7 +1431,7 @@
                                                             <td className="px-4 py-4 whitespace-nowrap text-center font-bold text-blue-600">{asGestionados}</td>
                                                             <td className="px-4 py-4 whitespace-nowrap text-center text-gray-600 font-medium">{asCobertura}%</td>
                                                             <td className="px-4 py-4 whitespace-nowrap text-center font-bold text-green-600">{asPromesas}</td>
-                                                            <td className="px-4 py-4 whitespace-nowrap text-right font-bold text-red-600">S/ {asMeta.toFixed(2)}</td>
+                                                            <td className="px-4 py-4 whitespace-nowrap text-right font-bold text-red-600">S/ {(Number(asMeta) || 0).toFixed(2)}</td>
                                                         </tr>
                                                     )
                                                 })}
@@ -1488,22 +1477,22 @@
                                         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
                                             <div className="bg-gray-100 p-5 rounded-2xl border border-gray-200">
                                                 <p className="text-sm font-bold text-gray-500 uppercase tracking-wider mb-1">Total Cartera (Clientes)</p>
-                                                <p className="text-3xl font-black text-gray-800">{historyObj.resumen.totalClientes}</p>
+                                                <p className="text-3xl font-black text-gray-800">{historyObj?.resumen?.totalClientes || 0}</p>
                                             </div>
                                             <div className="bg-gray-100 p-5 rounded-2xl border border-gray-200">
                                                 <p className="text-sm font-bold text-blue-500 uppercase tracking-wider mb-1">Clientes Gestionados</p>
                                                 <div className="flex items-end gap-2">
-                                                    <p className="text-3xl font-black text-blue-700">{historyObj.resumen.totalGestionados}</p>
-                                                    <p className="text-sm font-semibold text-blue-500 mb-1">({historyObj.resumen.porcentajeCobertura}% cobertura)</p>
+                                                    <p className="text-3xl font-black text-blue-700">{historyObj?.resumen?.totalGestionados || 0}</p>
+                                                    <p className="text-sm font-semibold text-blue-500 mb-1">({historyObj?.resumen?.porcentajeCobertura || 0}%)</p>
                                                 </div>
                                             </div>
                                             <div className="bg-gray-100 p-5 rounded-2xl border border-gray-200">
                                                 <p className="text-sm font-bold text-green-500 uppercase tracking-wider mb-1">Promesas de Pago</p>
-                                                <p className="text-3xl font-black text-green-600">{historyObj.resumen.totalPromesas}</p>
+                                                <p className="text-3xl font-black text-green-600">{historyObj?.resumen?.totalPromesas || 0}</p>
                                             </div>
                                             <div className="bg-gray-100 p-5 rounded-2xl border border-gray-200 border-l-4 border-l-red-500">
                                                 <p className="text-sm font-bold text-red-500 uppercase tracking-wider mb-1">Meta Exigible a Recaudar</p>
-                                                <p className="text-3xl font-black text-red-600">S/ {(Number(historyObj.resumen.meta) || 0).toFixed(2)}</p>
+                                                <p className="text-3xl font-black text-red-600">S/ {(Number(historyObj?.resumen?.meta) || 0).toFixed(2)}</p>
                                             </div>
                                         </div>
 
@@ -1524,7 +1513,7 @@
                                                         </tr>
                                                     </thead>
                                                     <tbody className="divide-y divide-gray-200">
-                                                        {historyObj.asesores.map(as => (
+                                                        {(historyObj?.asesores || []).map(as => (
                                                             <tr key={as.asesor} className="hover:bg-gray-50">
                                                                 <td className="px-6 py-4 whitespace-nowrap font-bold text-gray-800">{as.asesor}</td>
                                                                 <td className="px-4 py-4 whitespace-nowrap text-center text-gray-600">{as.aTot}</td>
